@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-botschat"
+version = "0.1.0"
+description = "BotsChat gateway channel adapter for Hermes Agent — chat with your Hermes agents from the BotsChat web UI, mobile apps, and CLI."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "iridiumwastaken" }]
+keywords = ["hermes", "hermes-plugin", "botschat", "chat", "gateway", "platform"]
+classifiers = [
+    "Framework :: Hermes Agent :: Plugin",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "websockets>=13",
+    "cryptography>=41",
+]
+
+# Hermes discovers pip-installed plugins through this entry-point group; the
+# value resolves `register` from the `botschat` package.
+[project.entry-points."hermes_agent.plugins"]
+botschat = "botschat:register"
+
+# The repo is a FLAT Hermes directory plugin (plugin.yaml + modules at the
+# root — exactly what the gateway's directory loader expects, and what
+# `hermes plugins install owner/repo` clones). The wheel re-maps those files
+# into a proper `botschat` package (package_dir points the package at the
+# repo root) so `pip install .` also works and the entry point above
+# resolves.
+[tool.setuptools]
+packages = ["botschat"]
+
+[tool.setuptools.package-dir]
+botschat = "."
+
+[tool.setuptools.package-data]
+botschat = ["plugin.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

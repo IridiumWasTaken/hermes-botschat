@@ -1,0 +1,23 @@
+name: botschat
+label: BotsChat
+kind: platform
+version: 0.1.0
+description: BotsChat gateway channel adapter for Hermes Agent — chat with your Hermes agents from the BotsChat web UI, mobile apps, and CLI.
+author: iridiumwastaken
+requires_env:
+  - name: BOTSCHAT_CLOUD_URL
+    description: "BotsChat server URL (e.g. https://console.botschat.app or http://localhost:8787)"
+    prompt: "BotsChat server URL"
+    url: "https://console.botschat.app"
+  - name: BOTSCHAT_PAIRING_TOKEN
+    description: "Pairing token from the BotsChat dashboard (bc_pat_…)"
+    prompt: "BotsChat pairing token"
+    password: true
+optional_env:
+  - name: BOTSCHAT_E2E_PASSWORD
+    description: "Optional E2E encryption password (must match the web UI)"
+    prompt: "E2E password (or empty)"
+    password: true
+  - name: BOTSCHAT_HOME_CHANNEL
+    description: "Default BotsChat sessionKey for cron delivery (e.g. agent:main:botschat:u_xxx:adhoc)"
+    prompt: "Home channel sessionKey (or empty)"
