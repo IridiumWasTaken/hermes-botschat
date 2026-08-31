@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+*.egg-info/
+dist/
+IDEA.md
+PITFALLS.md
+
+.DS_Store
