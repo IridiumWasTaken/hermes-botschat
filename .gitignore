@@ -6,5 +6,6 @@ build/
 dist/
 IDEA.md
 PITFALLS.md
+scripts/setup_multiprofile.py
 
 .DS_Store
