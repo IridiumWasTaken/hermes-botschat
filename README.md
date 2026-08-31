@@ -66,7 +66,7 @@ both are set, so pick one place per setting:
 | BotsChat server URL | `BOTSCHAT_CLOUD_URL` | `gateway.platforms.botschat.extra.cloudUrl` |
 | Pairing token | `BOTSCHAT_PAIRING_TOKEN` | `gateway.platforms.botschat.extra.pairingToken` |
 | E2E password *(optional)* | `BOTSCHAT_E2E_PASSWORD` | `gateway.platforms.botschat.extra.e2ePassword` |
-| Agent id *(optional, multi-agent)* | `BOTSCHAT_AGENT_ID` | `gateway.platforms.botschat.extra.agentId` |
+| Agent id *(optional)* | `BOTSCHAT_AGENT_ID` | `gateway.platforms.botschat.extra.agentId` |
 
 If you configure via `config.yaml` only, you must also set
 `gateway.platforms.botschat.enabled: true` explicitly — the env-var path
@@ -124,7 +124,7 @@ password, on Hermes builds with plugin optional-env support).
    export BOTSCHAT_CLOUD_URL=https://console.botschat.app
    export BOTSCHAT_PAIRING_TOKEN=bc_pat_...
    export BOTSCHAT_E2E_PASSWORD=...   # optional; must match the web UI
-   export BOTSCHAT_AGENT_ID=...       # optional; distinct per profile for multi-agent accounts
+   export BOTSCHAT_AGENT_ID=...       # optional; agent identity metadata (one connection per account)
    ```
 
    **Or `config.yaml`** (`~/.hermes/profiles/<profile>/config.yaml`):
@@ -137,7 +137,7 @@ password, on Hermes builds with plugin optional-env support).
            cloudUrl: https://console.botschat.app
            pairingToken: bc_pat_...
            e2ePassword: ...   # optional
-           agentId: hermes-2  # optional; distinct per profile for multi-agent accounts
+           agentId: private   # optional; agent identity metadata (one connection per account)
    ```
 
    **Or the CLI** (same effect as editing the file):
@@ -225,12 +225,14 @@ several).
   supports one live bot no matter where it runs.
 - **Different tokens (or different servers)** — fully independent
   connections; each profile is its own agent relaying into BotsChat.
-- **One account, several profiles (multi-agent)** — give each profile its own
-  pairing token **and** a distinct `BOTSCHAT_AGENT_ID` (e.g. `main`,
-  `hermes-2`, `work`). The server hosts multiple agents per account, each
-  with its own channels and sessions, so all your profiles live under one
-  account in the same UI. Without a distinct agent id, every connection
-  claims the default agent (`main`) and would share its channels.
+- **One account = one agent connection (upstream limitation).** The BotsChat
+  server keeps a single agent socket per account (`connection-do.ts` closes
+  every other agent socket with 4009 when a new one authenticates). Two
+  profiles on the same account therefore fight: the newest connection wins
+  and the older stops. `BOTSCHAT_AGENT_ID` sets identity metadata only — it
+  does **not** enable multiple connections per account. To run several
+  profiles, give each its **own BotsChat account** (own pairing token, own
+  E2E password).
 
 Configuration is per-profile: each profile has its own `.env` / `config.yaml`,
 and the desktop app's Settings → Messaging card has an **"Applies to"** scope
