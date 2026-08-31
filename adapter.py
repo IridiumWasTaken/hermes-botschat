@@ -725,7 +725,19 @@ def _on_post_tool_call(tool_name=None, session_id=None, duration_ms=None,
 
 
 def check_requirements() -> bool:
-    return bool(os.getenv("BOTSCHAT_CLOUD_URL") and os.getenv("BOTSCHAT_PAIRING_TOKEN"))
+    """Passive dependency probe: are the runtime deps importable?
+
+    Deliberately does NOT check credentials: the registry calls check_fn
+    without a config, and validate_config() is the credential gate (env OR
+    config extra) — so config-only setups (e.g. per-profile ``extra`` under
+    the multiplexer) can create adapters too.
+    """
+    for _mod in ("websockets", "cryptography"):
+        try:
+            __import__(_mod)
+        except ImportError:
+            return False
+    return True
 
 
 def validate_config(config) -> bool:
@@ -862,6 +874,11 @@ def register(ctx):
         adapter_factory=lambda cfg: BotsChatAdapter(cfg),
         check_fn=check_requirements,
         validate_config=validate_config,
+        # The enablement sweep's credential gate: "would this platform be
+        # configured with this (probe) config?" — env or extra creds. Without
+        # it, the deps-only check_fn would auto-enable botschat in profiles
+        # that have no config at all.
+        is_connected=validate_config,
         required_env=["BOTSCHAT_CLOUD_URL", "BOTSCHAT_PAIRING_TOKEN"],
         env_enablement_fn=_env_enablement,
         platform_hint=A2UI_PLATFORM_HINT,

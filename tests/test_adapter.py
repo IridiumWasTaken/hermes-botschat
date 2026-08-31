@@ -67,6 +67,31 @@ def test_register_wires_platform(ctx):
     assert callable(ctx.platform_kwargs["validate_config"])
     assert callable(ctx.platform_kwargs["env_enablement_fn"])
     assert ctx.platform_kwargs["emoji"] == "🤖"
+    # The enablement sweep's credential gate must be wired so deps-only
+    # check_fn can't auto-enable botschat in unconfigured profiles.
+    assert ctx.platform_kwargs["is_connected"] is adapter.validate_config
+
+
+def test_check_requirements_is_dep_probe(monkeypatch):
+    """check_fn passes WITHOUT env vars — config-only setups must create."""
+    for k in (
+        "BOTSCHAT_CLOUD_URL", "BOTSCHAT_PAIRING_TOKEN",
+        "BOTSCHAT_E2E_PASSWORD", "BOTSCHAT_AGENT_ID",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    assert adapter.check_requirements() is True
+
+
+def test_validate_config_accepts_extra_only(monkeypatch):
+    """Credentials in config extra (no env) pass the credential gate."""
+    monkeypatch.delenv("BOTSCHAT_CLOUD_URL", raising=False)
+    monkeypatch.delenv("BOTSCHAT_PAIRING_TOKEN", raising=False)
+    good = PlatformConfig(
+        enabled=True, extra={"cloudUrl": "https://x", "pairingToken": "bc_pat_x"}
+    )
+    assert adapter.validate_config(good) is True
+    bad = PlatformConfig(enabled=True, extra={})
+    assert adapter.validate_config(bad) is False
 
 
 def test_register_wires_a2ui_section(ctx):
