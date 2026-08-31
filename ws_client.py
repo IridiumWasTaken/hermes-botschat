@@ -67,6 +67,7 @@ class BotsChatCloudClient:
         account_id: str = "default",
         e2e_password: Optional[str] = None,
         agent_ids: Optional[list] = None,
+        agent_id: Optional[str] = None,
         get_model: Optional[Callable[[], Optional[str]]] = None,
         on_message: Optional[OnMessage] = None,
         on_status_change: Optional[OnStatusChange] = None,
@@ -77,6 +78,10 @@ class BotsChatCloudClient:
         self.pairing_token = pairing_token
         self.e2e_password = e2e_password
         self.agent_ids = agent_ids or ["hermes"]
+        # Optional distinct agent identity (BOTSCHAT_AGENT_ID). When unset the
+        # server assigns the default agent; setting it lets one BotsChat
+        # account host several Hermes profiles as separate agents.
+        self.agent_id = agent_id
         self.get_model = get_model or (lambda: None)
         self.on_message = on_message
         self.on_status_change = on_status_change
@@ -207,6 +212,7 @@ class BotsChatCloudClient:
         await ws.send(
             Auth(
                 token=self.pairing_token,
+                agentId=self.agent_id,
                 agentType="hermes",
                 agents=self.agent_ids,
                 model=self.get_model(),

@@ -216,3 +216,46 @@ def test_disconnect_releases_lock(monkeypatch):
         assert released == [("botschat", key)]
 
     asyncio.run(scenario())
+
+
+def test_connect_threads_distinct_agent_id(monkeypatch):
+    """BOTSCHAT_AGENT_ID becomes the client's agent identity + agents list."""
+    monkeypatch.setattr(
+        "gateway.status.acquire_scoped_lock",
+        lambda scope, identity, metadata=None: (True, None),
+    )
+    _env(monkeypatch)
+    monkeypatch.setenv("BOTSCHAT_AGENT_ID", "hermes-2")
+
+    async def scenario():
+        a = _make_adapter()
+        try:
+            assert await a.connect()
+            assert a._client is not None
+            assert a._client.agent_id == "hermes-2"
+            assert a._client.agent_ids == ["hermes-2"]
+        finally:
+            await a.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_connect_defaults_to_hermes_agent(monkeypatch):
+    """Without BOTSCHAT_AGENT_ID the client stays the default 'hermes'."""
+    monkeypatch.setattr(
+        "gateway.status.acquire_scoped_lock",
+        lambda scope, identity, metadata=None: (True, None),
+    )
+    _env(monkeypatch)
+
+    async def scenario():
+        a = _make_adapter()
+        try:
+            assert await a.connect()
+            assert a._client is not None
+            assert a._client.agent_id is None
+            assert a._client.agent_ids == ["hermes"]
+        finally:
+            await a.disconnect()
+
+    asyncio.run(scenario())

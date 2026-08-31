@@ -21,3 +21,6 @@ optional_env:
   - name: BOTSCHAT_HOME_CHANNEL
     description: "Default BotsChat sessionKey for cron delivery (e.g. agent:main:botschat:u_xxx:adhoc)"
     prompt: "Home channel sessionKey (or empty)"
+  - name: BOTSCHAT_AGENT_ID
+    description: "Agent id this profile connects as (default: server-assigned 'main'). Set a distinct id per profile to host multiple Hermes agents on one BotsChat account."
+    prompt: "Agent id (or empty)"

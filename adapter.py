@@ -105,6 +105,9 @@ class BotsChatAdapter(BasePlatformAdapter):
         self.cloud_url = os.getenv("BOTSCHAT_CLOUD_URL") or extra.get("cloudUrl", "")
         self.pairing_token = os.getenv("BOTSCHAT_PAIRING_TOKEN") or extra.get("pairingToken", "")
         self.e2e_password = os.getenv("BOTSCHAT_E2E_PASSWORD") or extra.get("e2ePassword")
+        # Optional distinct agent identity: lets one BotsChat account host
+        # several Hermes profiles as separate agents (own channels/sessions).
+        self.agent_id = os.getenv("BOTSCHAT_AGENT_ID") or extra.get("agentId")
         self._client: Optional[BotsChatCloudClient] = None
         self._default_model: Optional[str] = None
         self._default_provider: Optional[str] = None
@@ -164,7 +167,8 @@ class BotsChatAdapter(BasePlatformAdapter):
             pairing_token=self.pairing_token,
             account_id="default",
             e2e_password=self.e2e_password,
-            agent_ids=["hermes"],
+            agent_ids=[self.agent_id] if self.agent_id else ["hermes"],
+            agent_id=self.agent_id,
             get_model=lambda: self._default_model,
             on_message=self._on_cloud,
             on_status_change=self._on_connection_status,
@@ -741,6 +745,9 @@ def _env_enablement() -> Optional[dict]:
     e2e = os.getenv("BOTSCHAT_E2E_PASSWORD", "").strip()
     if e2e:
         seed["e2ePassword"] = e2e
+    agent_id = os.getenv("BOTSCHAT_AGENT_ID", "").strip()
+    if agent_id:
+        seed["agentId"] = agent_id
     home = os.getenv("BOTSCHAT_HOME_CHANNEL", "").strip()
     if home:
         # Cron delivery + cross-platform message target (a BotsChat sessionKey).

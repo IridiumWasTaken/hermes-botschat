@@ -79,12 +79,13 @@ async def wait_until(fn, timeout=3.0):
     return False
 
 
-def make_client(port, e2e_password=None, on_message=None):
+def make_client(port, e2e_password=None, on_message=None, agent_id=None, agent_ids=None):
     return BotsChatCloudClient(
         cloud_url=f"http://127.0.0.1:{port}",
         pairing_token="bc_pat_test_token",
         e2e_password=e2e_password,
-        agent_ids=["hermes"],
+        agent_ids=agent_ids or ["hermes"],
+        agent_id=agent_id,
         on_message=on_message,
     )
 
@@ -122,6 +123,29 @@ def test_auth_handshake_and_post_auth_push():
         assert [m.type for m in received] == [
             "task.scan.request", "models.request", "settings.notifyPreview",
         ]
+
+    asyncio.run(scenario())
+
+
+def test_auth_carries_distinct_agent_id():
+    """BOTSCHAT_AGENT_ID flows into the auth frame (multi-agent accounts)."""
+
+    async def scenario():
+        mock = MockConnectionDO()
+        server, port = await run_server(mock.handler)
+        client = make_client(port, agent_id="hermes-2", agent_ids=["hermes-2"])
+        client.start()
+        try:
+            assert await wait_until(lambda: client.connected), "auth.ok never arrived"
+        finally:
+            await client.stop()
+            server.close()
+            await server.wait_closed()
+
+        auth = mock.received[0]
+        assert isinstance(auth, Auth)
+        assert auth.agentId == "hermes-2"
+        assert auth.agents == ["hermes-2"]
 
     asyncio.run(scenario())
 
