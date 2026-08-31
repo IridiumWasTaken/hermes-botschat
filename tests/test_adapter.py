@@ -284,3 +284,99 @@ def test_connect_defaults_to_hermes_agent(monkeypatch):
             await a.disconnect()
 
     asyncio.run(scenario())
+
+
+def test_connect_hub_agents_list_from_env(monkeypatch):
+    """BOTSCHAT_AGENTS (hub mode) overrides agent_id in the agents list."""
+    monkeypatch.setattr(
+        "gateway.status.acquire_scoped_lock",
+        lambda scope, identity, metadata=None: (True, None),
+    )
+    _env(monkeypatch)
+    monkeypatch.setenv("BOTSCHAT_AGENT_ID", "main")
+    monkeypatch.setenv("BOTSCHAT_AGENTS", "main,private, work ")
+
+    async def scenario():
+        a = _make_adapter()
+        try:
+            assert await a.connect()
+            assert a._client is not None
+            assert a._client.agent_ids == ["main", "private", "work"]
+            # agent_id still carries the profile identity; agents list is the hub list
+            assert a._client.agent_id == "main"
+        finally:
+            await a.disconnect()
+
+    asyncio.run(scenario())
+
+
+def test_parse_agents_from_extra_list(monkeypatch):
+    """extra.agents (list) is accepted; empty/whitespace entries are dropped."""
+    _env(monkeypatch)
+    a = _make_adapter()
+    assert a._parse_agents({"agents": ["main", "private"]}) == ["main", "private"]
+    assert a._parse_agents({"agents": "main, private,"}) == ["main", "private"]
+    assert a._parse_agents({"agents": ""}) is None
+    assert a._parse_agents({"agents": " , "}) is None
+    assert a._parse_agents({}) is None
+
+
+def test_parse_agent_profiles(monkeypatch):
+    """Hub routing table parses from env string, extra dict, or stays empty."""
+    _env(monkeypatch)
+    a = _make_adapter()
+    monkeypatch.setenv("BOTSCHAT_AGENT_PROFILES", "main:default, private:private")
+    assert a._parse_agent_profiles({}) == {"main": "default", "private": "private"}
+    monkeypatch.delenv("BOTSCHAT_AGENT_PROFILES")
+    assert a._parse_agent_profiles({"agentProfiles": {"main": "default"}}) == {"main": "default"}
+    assert a._parse_agent_profiles({"agentProfiles": "main:default"}) == {"main": "default"}
+    assert a._parse_agent_profiles({}) == {}
+    assert a._parse_agent_profiles({"agentProfiles": "junk-no-colon"}) == {}
+
+
+def test_profile_for_session_maps_agent_segment(monkeypatch):
+    """agent:<id>:... session keys map to the profile table; unset/unknown -> None."""
+    _env(monkeypatch)
+    monkeypatch.setenv("BOTSCHAT_AGENT_PROFILES", "main:default,private:private")
+    a = _make_adapter()
+    key = "agent:private:botschat:u_zwve3q3bxhzeafmk:adhoc"
+    assert a._profile_for_session(key) == "private"
+    assert a._profile_for_session("agent:main:botschat:u_zwve3q3bxhzeafmk:adhoc") == "default"
+    assert a._profile_for_session("agent:work:botschat:u_x:adhoc") is None  # unmapped
+    assert a._profile_for_session("not-a-session-key") is None
+
+
+def test_dispatch_stamps_hub_profile(monkeypatch):
+    """Hub mode stamps source.profile so the multiplexer routes to the profile."""
+    _env(monkeypatch)
+    monkeypatch.setenv("BOTSCHAT_AGENT_PROFILES", "main:default,private:private")
+    a = _make_adapter()
+    captured = {}
+
+    async def capture(event):
+        captured["event"] = event
+
+    a.handle_message = capture  # type: ignore[method-assign]
+
+    async def scenario():
+        await a._dispatch(
+            text="hi",
+            session_key="agent:private:botschat:u_zwve3q3bxhzeafmk:adhoc",
+            user_id="u_zwve3q3bxhzeafmk",
+            message_id="m1",
+        )
+
+    asyncio.run(scenario())
+    assert captured["event"].source.profile == "private"
+
+    # Unmapped agent -> no stamping (falls through to the owning profile)
+    async def scenario2():
+        await a._dispatch(
+            text="hi",
+            session_key="agent:main:botschat:u_zwve3q3bxhzeafmk:adhoc",
+            user_id="u_zwve3q3bxhzeafmk",
+            message_id="m2",
+        )
+
+    asyncio.run(scenario2())
+    assert captured["event"].source.profile == "default"

@@ -108,6 +108,14 @@ class BotsChatAdapter(BasePlatformAdapter):
         # Optional distinct agent identity: lets one BotsChat account host
         # several Hermes profiles as separate agents (own channels/sessions).
         self.agent_id = os.getenv("BOTSCHAT_AGENT_ID") or extra.get("agentId")
+        # Optional multi-agent list for hub mode: one connection declaring all
+        # agents (BOTSCHAT_AGENTS="main,private"). When set it wins over
+        # agent_id for the auth frame's agents array.
+        self.agent_ids = self._parse_agents(extra)
+        # Hub-mode inbound routing: agent id (from the session key) -> Hermes
+        # profile. Stamped onto source.profile so the multiplexer activates
+        # that profile's agent run (BOTSCHAT_AGENT_PROFILES="main:default,private:private").
+        self.agent_profiles = self._parse_agent_profiles(extra)
         self._client: Optional[BotsChatCloudClient] = None
         self._default_model: Optional[str] = None
         self._default_provider: Optional[str] = None
@@ -127,6 +135,62 @@ class BotsChatAdapter(BasePlatformAdapter):
         self._stream_runs: dict = {}
         self._last_session: Optional[str] = None
         self._media_dir: Optional[str] = None
+
+    @staticmethod
+    def _parse_agents(extra: dict) -> Optional[list]:
+        """Resolve the auth-frame agents list for hub mode.
+
+        Priority: BOTSCHAT_AGENTS env (comma-separated) > extra.agents
+        (list or comma-separated string). Returns None when unset — the
+        client then falls back to ``[agent_id or "hermes"]``.
+        """
+        raw = os.getenv("BOTSCHAT_AGENTS") or extra.get("agents")
+        if not raw:
+            return None
+        if isinstance(raw, list):
+            items = raw
+        else:
+            items = [p.strip() for p in str(raw).split(",")]
+        agents = [p for p in items if p]
+        return agents or None
+
+    @staticmethod
+    def _parse_agent_profiles(extra: dict) -> dict:
+        """Resolve the hub-mode agent->profile routing table.
+
+        Priority: BOTSCHAT_AGENT_PROFILES env ("agent:profile,agent:profile")
+        > extra.agentProfiles (dict, or comma-separated string). Returns {} when
+        unset — no profile stamping (single-profile behavior).
+        """
+        raw = os.getenv("BOTSCHAT_AGENT_PROFILES") or extra.get("agentProfiles")
+        if not raw:
+            return {}
+        if isinstance(raw, dict):
+            return {str(k).strip(): str(v).strip() for k, v in raw.items() if str(k).strip()}
+        result = {}
+        for pair in str(raw).split(","):
+            if ":" not in pair:
+                continue
+            agent, _, profile = pair.partition(":")
+            agent, profile = agent.strip(), profile.strip()
+            if agent and profile:
+                result[agent] = profile
+        return result
+
+    def _profile_for_session(self, session_key: str) -> Optional[str]:
+        """Map a BotsChat sessionKey's agent segment to a Hermes profile.
+
+        Session keys are ``agent:<agentId>:botschat:<userId>:...`` — the
+        second segment is the target agent. Returns None when hub mode is
+        off or the agent has no mapping (stays on the owning profile).
+        """
+        if not self.agent_profiles:
+            return None
+        try:
+            agent = session_key.split(":", 2)[1]
+        except IndexError:
+            return None
+        return self.agent_profiles.get(agent)
 
     # ------------------------------------------------------------- connection
 
@@ -167,7 +231,7 @@ class BotsChatAdapter(BasePlatformAdapter):
             pairing_token=self.pairing_token,
             account_id="default",
             e2e_password=self.e2e_password,
-            agent_ids=[self.agent_id] if self.agent_id else ["hermes"],
+            agent_ids=self.agent_ids or ([self.agent_id] if self.agent_id else ["hermes"]),
             agent_id=self.agent_id,
             get_model=lambda: self._default_model,
             on_message=self._on_cloud,
@@ -440,6 +504,12 @@ class BotsChatAdapter(BasePlatformAdapter):
             user_name=user_id,
             thread_id=thread_id,
         )
+        # Hub mode: route to the profile owning the session key's agent.
+        # The runner honors a pre-stamped source.profile (skips route
+        # resolution) and activates the profile-scoped agent run.
+        hub_profile = self._profile_for_session(session_key)
+        if hub_profile:
+            source.profile = hub_profile
         event = MessageEvent(
             text=text,
             message_type=MessageType.TEXT,

@@ -22,5 +22,11 @@ optional_env:
     description: "Default BotsChat sessionKey for cron delivery (e.g. agent:main:botschat:u_xxx:adhoc)"
     prompt: "Home channel sessionKey (or empty)"
   - name: BOTSCHAT_AGENT_ID
-    description: "Agent id this profile connects as (default: server-assigned 'main'). Set a distinct id per profile to host multiple Hermes agents on one BotsChat account."
+    description: "Agent id this profile connects as (default: server-assigned 'main'). Identity metadata only — the server allows one agent connection per account."
     prompt: "Agent id (or empty)"
+  - name: BOTSCHAT_AGENTS
+    description: "Comma-separated agent ids for hub mode: one connection declaring several agents (e.g. main,private)."
+    prompt: "Agent ids, comma-separated (or empty)"
+  - name: BOTSCHAT_AGENT_PROFILES
+    description: "Hub-mode routing: agent id to Hermes profile (e.g. main:default,private:private). Messages for each agent are routed to that profile's agent run."
+    prompt: "Agent-to-profile map (or empty)"

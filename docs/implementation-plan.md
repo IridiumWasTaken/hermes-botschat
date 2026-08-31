@@ -167,6 +167,58 @@ Items deferred from M5/M6 — not blockers; revisit when the environment support
    round-trip needs a vision-capable Hermes profile and a BotsChat media-capable client. Test with
    `scripts/roundtrip_live.py` once such a profile exists.
 
+## M8 — Multi-agent hub: several Hermes profiles, one BotsChat account (2–3 days)
+
+**Goal.** Chat with *multiple* Hermes profiles from one BotsChat account, each in its own channel —
+without the account-connection fight documented in the README.
+
+**Server constraint (verified in `botschat-app/botsChat` `connection-do.ts`).** The ConnectionDO keeps
+exactly ONE agent socket per account: the auth handler closes every other socket tagged `"openclaw"`
+with 4009 (`getWebSockets("openclaw")`, code at line ~275), and the relay picks a single socket
+(`sockets.find(s => getTag(s) === "openclaw")`, line ~635). The tag is hardcoded (`serializeAttachment
+({ tag: "openclaw" })`, line ~226). Consequences:
+
+- Two Hermes profiles each opening a connection on the same account ⇒ replacement war: newest wins,
+  older dies permanently (`Connection replaced by server — not reconnecting`). `BOTSCHAT_AGENT_ID` is
+  identity metadata only — it does not create a second socket.
+- The multi-agent protocol fields (`auth.agents: [...]`, `user.message.targetAgentId`, channel
+  `openclaw_agent_id`) exist for ONE connection hosting several agents internally — that is the model
+  to implement.
+
+**Design: hub mode.** One profile (the hub, default) owns the single connection and declares all
+agents; the multiplexer routes each message to the right profile's agent run.
+
+1. **Single connection, all agents.** The hub profile's adapter connects once with
+   `agents: ["main", "private", ...]` (one entry per participating profile, configured via
+   `BOTSCHAT_AGENTS` / `gateway.platforms.botschat.extra.agents`). Secondary profiles do NOT open a
+   connection (plugin not enabled there, or hub-mode flag suppresses connect).
+2. **Inbound routing via existing multiplexer machinery.** `gateway.profile_routes` matches
+   (platform, chat_id) → profile and stamps `source.profile`; under `multiplex_profiles` this
+   activates the profile-scoped agent run (run.py `_profile_name_for_source`). The BotsChat session
+   key is the chat_id (`agent:<agentId>:botschat:<userId>:adhoc`), so a route per agent-id prefix
+   maps 1:1 to profiles, e.g.:
+   ```yaml
+   gateway:
+     multiplex_profiles: true
+     profile_routes:
+       - platform: botschat
+         chat_id: "agent:private:"   # prefix match
+         profile: private
+   ```
+3. **Reply path (the open question).** Replies from a secondary profile's agent run must flow back
+   through the hub's single connection. The session store already namespaces keys by profile
+   (`agent:<profile>:botschat:dm:<sessionKey>`, via `set_owner_profile`), and replies target the
+   source that received the message — so the gateway should route them to the botschat adapter; the
+   adapter must then send over the shared socket with the original sessionKey. **Spike first**: run
+   hub mode against the hosted console with two profiles and verify a `private` channel message is
+   answered by the private profile's agent via the one socket.
+4. **Docs.** README Profiles section: hub mode as the supported multi-agent setup (one account, one
+   connection, `profile_routes`); keep the single-socket limitation note.
+
+**Exit criteria.** Hub-mode unit tests (agents list from config; suppressed secondary connections);
+live E2E: two channels (`main`, `private`) on ONE account, each answered by its own profile, no 4009
+replacement, replies decrypt (E2E) in both.
+
 ---
 
 ## Testing strategy
