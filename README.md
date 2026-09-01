@@ -28,6 +28,7 @@ For all other features, see [BotsChat](https://github.com/botschat-app/botsChat)
 | M5 streaming + activity + media | ✅ tool activity live (agent.activity); streaming + media implemented, live verification deferred to M7 (provider stream gate not found in this env) |
 | M6 hardening, packaging | ✅ reconnect verified (4009/auth.fail no-reconnect, 429/503 backoff, jitter, reset); multi-profile token lock; pyproject entry point (wheel + git install E2E verified); README (E2E, trust model, troubleshooting); port-parity audit clean |
 | M7 nice-to-have (parked) | ⏳ token streaming (provider must stream), live media round-trip — may implement in the future |
+| M8 multi-agent hub | ✅ one connection hosting several agents (`agents` + `agentProfiles`), multiplexer routes each channel to its profile's agent run; live-verified with two profiles on one account |
 
 ## Deployment
 
@@ -67,6 +68,8 @@ both are set, so pick one place per setting:
 | Pairing token | `BOTSCHAT_PAIRING_TOKEN` | `gateway.platforms.botschat.extra.pairingToken` |
 | E2E password *(optional)* | `BOTSCHAT_E2E_PASSWORD` | `gateway.platforms.botschat.extra.e2ePassword` |
 | Agent id *(optional)* | `BOTSCHAT_AGENT_ID` | `gateway.platforms.botschat.extra.agentId` |
+| Agents, hub mode *(optional)* | `BOTSCHAT_AGENTS` | `gateway.platforms.botschat.extra.agents` |
+| Agent → profile map, hub mode *(optional)* | `BOTSCHAT_AGENT_PROFILES` | `gateway.platforms.botschat.extra.agentProfiles` |
 
 If you configure via `config.yaml` only, you must also set
 `gateway.platforms.botschat.enabled: true` explicitly — the env-var path
@@ -125,6 +128,8 @@ password, on Hermes builds with plugin optional-env support).
    export BOTSCHAT_PAIRING_TOKEN=bc_pat_...
    export BOTSCHAT_E2E_PASSWORD=...   # optional; must match the web UI
    export BOTSCHAT_AGENT_ID=...       # optional; agent identity metadata (one connection per account)
+   export BOTSCHAT_AGENTS=main,private       # hub mode: agents this connection hosts
+   export BOTSCHAT_AGENT_PROFILES=main:default,private:private  # hub mode: agent -> Hermes profile
    ```
 
    **Or `config.yaml`** (`~/.hermes/profiles/<profile>/config.yaml`):
@@ -137,7 +142,11 @@ password, on Hermes builds with plugin optional-env support).
            cloudUrl: https://console.botschat.app
            pairingToken: bc_pat_...
            e2ePassword: ...   # optional
-           agentId: private   # optional; agent identity metadata (one connection per account)
+           agentId: main      # optional; agent identity metadata (one connection per account)
+           agents: [main, private]      # hub mode: agents this connection hosts
+           agentProfiles:               # hub mode: BotsChat agent -> Hermes profile
+             main: default
+             private: private
    ```
 
    **Or the CLI** (same effect as editing the file):
@@ -175,7 +184,8 @@ password, on Hermes builds with plugin optional-env support).
   — the server stays zero-knowledge.
 - Wrong or mismatched password → U+FFFD garbage (or `[Decryption Failed]`).
   The gateway reads `BOTSCHAT_E2E_PASSWORD` at process start: after changing
-  it, restart with `hermes -p <profile> gateway restart`.
+  it, restart the gateway — `hermes gateway restart` from the default home
+  (per-profile restarts are refused under the multiplexer).
 
 ## Troubleshooting
 
@@ -189,6 +199,8 @@ password, on Hermes builds with plugin optional-env support).
 | `hermes plugins install` blocked | Caution verdict (network plugin) — review findings, `--force` if trusted |
 | Cron jobs don't reach chat | Set `BOTSCHAT_HOME_CHANNEL` to a sessionKey and use `deliver=botschat` |
 | `/model` seems ignored | Applies on the next reply to that session (`model.changed` emission) |
+| Wrong agent answers a channel | The channel's agent id isn't mapped in `agentProfiles` (or maps to the wrong profile). Fix the map in the hub profile's config and restart the gateway |
+| Two profiles on one account keep replacing each other (4009) | Both open their own connection; the server keeps only the newest. Use hub mode: one profile owns the connection (`agents` + `agentProfiles`), the others must not enable botschat |
 
 # Plugin reference
 ## Layout
@@ -212,39 +224,86 @@ The plugin is an ordinary channel adapter — it runs in your normal Hermes
 profile; **no dedicated profile is required**. (The `botschat-test` profile
 used during development is a testing artifact, not a requirement.)
 
-Running the plugin in several profiles at once works, with one rule: **each
-live connection needs its own pairing token** (a BotsChat account can issue
-several).
+### One account = one agent connection (upstream limitation)
 
-- **Same token, same machine** — the second profile fails to connect with
-  `pairing token already in use by another profile`. This is a deliberate
-  machine-local scoped lock (M6): it prevents two agents double-answering the
-  same chat.
-- **Same token, different machines** — the BotsChat server itself replaces the
-  older connection (close code 4009, no reconnect), so one token effectively
-  supports one live bot no matter where it runs.
-- **Different tokens (or different servers)** — fully independent
-  connections; each profile is its own agent relaying into BotsChat.
-- **One account = one agent connection (upstream limitation).** The BotsChat
-  server keeps a single agent socket per account (`connection-do.ts` closes
-  every other agent socket with 4009 when a new one authenticates). Two
-  profiles on the same account therefore fight: the newest connection wins
-  and the older stops. `BOTSCHAT_AGENT_ID` sets identity metadata only — it
-  does **not** enable multiple connections per account. To run several
-  profiles, give each its **own BotsChat account** (own pairing token, own
-  E2E password).
+The BotsChat server keeps a **single agent socket per account**:
+`connection-do.ts` closes every other agent socket with 4009 when a new one
+authenticates. Two profiles each opening their own connection on the same
+account therefore fight: the newest wins, the older stops permanently.
+`BOTSCHAT_AGENT_ID` is identity metadata only — it does **not** create a
+second connection. (Different tokens on *different accounts/servers* are
+fully independent connections.)
 
-Configuration is per-profile: each profile has its own `.env` / `config.yaml`,
-and the desktop app's Settings → Messaging card has an **"Applies to"** scope
-selector to edit each profile's fields from the same page.
+The protocol does, however, let **one connection host several agents**: the
+auth frame declares `agents: [...]`, and inbound messages carry the target
+agent id in the session key (`agent:<agentId>:botschat:<userId>:…`). Hermes
+leverages that with **hub mode**.
 
-> **Multiplexer note:** when several profiles are served by a single gateway
-> process (multiplexed profiles), the plugin reads its `BOTSCHAT_*` settings
-> from the gateway's *process* environment, which is shared by all served
-> profiles — per-profile env values don't separate in that mode. Use separate
-> gateways when profiles need genuinely different connections. (In-process,
-> tool-activity attribution is also best-effort: the activity hooks attach to
-> the first connected adapter.)
+### Hub mode: one gateway, several profiles, one agent per profile (recommended)
+
+Run the plugin in **one profile only** (the *hub*, usually the default
+profile) and let the multiplexed gateway route each BotsChat channel to the
+Hermes profile that should answer it:
+
+- **One gateway** — the multiplexer serves every profile in a single
+  process, so all profiles' agents are already reachable in-process.
+- **One connection** — the hub profile owns the account's single agent
+  socket and declares all agents (`agents: ["main", "private", …]`).
+- **One agent per profile** — `agentProfiles` maps each BotsChat agent id to
+  the Hermes profile behind it (`{main: default, private: private}`).
+
+**How a message is routed:**
+
+1. You send a message in the `private` channel of the BotsChat web UI.
+2. The channel's session key embeds the agent id:
+   `agent:private:botschat:<userId>:adhoc`.
+3. The message arrives over the single connection in the hub profile's
+   adapter, which parses the agent segment and looks it up in
+   `agentProfiles` → `private`.
+4. The adapter stamps the message with the target profile; the multiplexer
+   hands the turn to the **private profile's agent run** (its sessions,
+   tools, model — all already alive inside the multiplexer).
+5. The reply flows back through the same single connection to your channel.
+
+**Configuration — everything lives in the hub profile** (usually the default
+profile; note `hermes gateway restart` only works from the default home):
+
+```yaml
+# ~/.hermes/config.yaml  (default profile)
+plugins:
+  enabled: ["platforms/botschat"]        # user-installed plugins need opt-in
+gateway:
+  platforms:
+    botschat:
+      enabled: true
+      extra:
+        cloudUrl: https://console.botschat.app
+        pairingToken: bc_pat_...
+        e2ePassword: ...                 # optional; must match the web UI
+        agents: [main, private]          # agents this one connection hosts
+        agentProfiles:                   # BotsChat agent -> Hermes profile
+          main: default
+          private: private
+```
+
+Or as env vars in the hub profile: `BOTSCHAT_AGENTS=main,private` and
+`BOTSCHAT_AGENT_PROFILES=main:default,private:private`.
+
+**The other profiles need nothing** — no plugin, no BotsChat config. Their
+agents are served by the multiplexer and the hub routes to them by name.
+Make sure they do **not** run their own botschat connection (don't install or
+enable the plugin there), or the account's single socket gets stolen and the
+4009 war starts again.
+
+**Adding another agent** (e.g. `tardis`): add it to `agents` and add
+`tardis: tardis` to `agentProfiles` in the hub config, then restart the
+gateway. Nothing changes in the tardis profile.
+
+> **Multiplexer note:** under a multiplexed gateway, the hub profile's
+> `BOTSCHAT_*` settings are the only ones that matter — the connection is
+> created there. Do **not** use `hermes -p <profile> gateway restart`: the
+> multiplexer refuses per-profile restarts (exit 78, "Gateway restart
+> failed"). Restart from the default home with `hermes gateway restart`.
 
 ## Tests
 
