@@ -932,6 +932,38 @@ def _on_cron_session_end(session_id=None, platform=None, **kwargs):
     loop.call_soon_threadsafe(_send)
 
 
+def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict:
+    """Bridge config.yaml ``extra`` values into env vars for the Settings UI.
+
+    Core hook (``PlatformEntry.apply_yaml_config_fn``), called by
+    ``load_gateway_config()`` in every process that loads the profile config
+    — the desktop backend (which feeds the Messaging card) and the gateway
+    (which connects). The env vars use the same formats the adapter's env
+    parsers expect (comma list for agents, ``agent:profile`` pairs for
+    agentProfiles). A manually-set env var is never overwritten (env wins
+    over YAML). Returns {} — the values already live in ``extra``.
+    """
+    extra = platform_cfg.get("extra", {}) or {}
+    mapping = {
+        "cloudUrl": "BOTSCHAT_CLOUD_URL",
+        "pairingToken": "BOTSCHAT_PAIRING_TOKEN",
+        "e2ePassword": "BOTSCHAT_E2E_PASSWORD",
+        "agentId": "BOTSCHAT_AGENT_ID",
+        "agents": "BOTSCHAT_AGENTS",
+        "agentProfiles": "BOTSCHAT_AGENT_PROFILES",
+    }
+    for key, env in mapping.items():
+        if key not in extra or os.getenv(env):
+            continue
+        value = extra[key]
+        if isinstance(value, list):
+            value = ",".join(str(v) for v in value)
+        elif isinstance(value, dict):
+            value = ",".join(f"{k}:{v}" for k, v in value.items())
+        os.environ[env] = str(value)
+    return {}
+
+
 def register(ctx):
     """Plugin entry point — called once at Hermes startup."""
     global _PROFILE_NAME, _CTX
@@ -951,6 +983,7 @@ def register(ctx):
         is_connected=validate_config,
         required_env=["BOTSCHAT_CLOUD_URL", "BOTSCHAT_PAIRING_TOKEN"],
         env_enablement_fn=_env_enablement,
+        apply_yaml_config_fn=_apply_yaml_config,
         platform_hint=A2UI_PLATFORM_HINT,
         emoji="🤖",
         max_message_length=4000,

@@ -6,6 +6,7 @@ against the installed Hermes version.
 """
 
 import asyncio
+import os
 
 import pytest
 
@@ -70,6 +71,62 @@ def test_register_wires_platform(ctx):
     # The enablement sweep's credential gate must be wired so deps-only
     # check_fn can't auto-enable botschat in unconfigured profiles.
     assert ctx.platform_kwargs["is_connected"] is adapter.validate_config
+    # YAML→env bridge so the Settings UI shows config.yaml-sourced values.
+    assert ctx.platform_kwargs["apply_yaml_config_fn"] is adapter._apply_yaml_config
+
+
+def test_apply_yaml_config_bridges_extra_to_env(monkeypatch):
+    """config extra values land in BOTSCHAT_* env (list/dict serialized)."""
+    _BOTSCHAT_ENVS = (
+        "BOTSCHAT_CLOUD_URL", "BOTSCHAT_PAIRING_TOKEN", "BOTSCHAT_E2E_PASSWORD",
+        "BOTSCHAT_AGENT_ID", "BOTSCHAT_AGENTS", "BOTSCHAT_AGENT_PROFILES",
+    )
+    for k in _BOTSCHAT_ENVS:
+        monkeypatch.delenv(k, raising=False)
+    platform_cfg = {
+        "extra": {
+            "cloudUrl": "https://console.botschat.app",
+            "pairingToken": "bc_pat_abc",
+            "e2ePassword": "pw",
+            "agentId": "main",
+            "agents": ["main", "private"],
+            "agentProfiles": {"main": "default", "private": "private"},
+        }
+    }
+    try:
+        assert adapter._apply_yaml_config({}, platform_cfg) == {}
+        assert os.getenv("BOTSCHAT_CLOUD_URL") == "https://console.botschat.app"
+        assert os.getenv("BOTSCHAT_PAIRING_TOKEN") == "bc_pat_abc"
+        assert os.getenv("BOTSCHAT_E2E_PASSWORD") == "pw"
+        assert os.getenv("BOTSCHAT_AGENT_ID") == "main"
+        assert os.getenv("BOTSCHAT_AGENTS") == "main,private"
+        assert os.getenv("BOTSCHAT_AGENT_PROFILES") == "main:default,private:private"
+    finally:
+        # The bridge writes os.environ directly — monkeypatch.delenv does not
+        # undo direct writes, so clean up explicitly to avoid cross-test leak.
+        for k in _BOTSCHAT_ENVS:
+            os.environ.pop(k, None)
+
+
+def test_apply_yaml_config_respects_existing_env(monkeypatch):
+    """A manually-set env var wins over the config value (env > YAML)."""
+    monkeypatch.setenv("BOTSCHAT_PAIRING_TOKEN", "bc_pat_env_wins")
+    monkeypatch.delenv("BOTSCHAT_CLOUD_URL", raising=False)
+    platform_cfg = {"extra": {"cloudUrl": "https://x", "pairingToken": "bc_pat_yaml"}}
+    try:
+        adapter._apply_yaml_config({}, platform_cfg)
+        assert os.getenv("BOTSCHAT_PAIRING_TOKEN") == "bc_pat_env_wins"
+        assert os.getenv("BOTSCHAT_CLOUD_URL") == "https://x"
+    finally:
+        os.environ.pop("BOTSCHAT_CLOUD_URL", None)
+        os.environ.pop("BOTSCHAT_PAIRING_TOKEN", None)
+
+
+def test_apply_yaml_config_no_extra_is_noop(monkeypatch):
+    """No extra block -> nothing set, empty dict returned."""
+    monkeypatch.delenv("BOTSCHAT_PAIRING_TOKEN", raising=False)
+    assert adapter._apply_yaml_config({}, {}) == {}
+    assert os.getenv("BOTSCHAT_PAIRING_TOKEN") is None
 
 
 def test_check_requirements_is_dep_probe(monkeypatch):
